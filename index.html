@@ -46,6 +46,8 @@
             position: absolute;
             z-index: -1;
             top: 0;
+            touch-action: none;
+            -webkit-touch-callout: none;
         }
 
         /* Hero Stage */
@@ -1233,7 +1235,12 @@
 
     <!-- Song Stage -->
     <div class="song-stage" id="songStage">
-        <div id="pleaseClick">🎤 Click anywhere to start the karaoke show!<span>🎵</span></div>
+        <div id="pleaseClick">
+            🎤 Click anywhere to start the karaoke show!<span>🎵</span>
+            <div id="audioStatus" style="font-size: 0.8em; margin-top: 10px; opacity: 0.8; display: none;">
+                🔇 Tap to enable sound
+            </div>
+        </div>
         <div id="wishes">
             <p id="p1"></p>
             <p id="p2"></p>
@@ -1274,12 +1281,63 @@
     <script>
         // Audio Context for birthday song
         let audioCtx;
+        let audioInitialized = false;
         
         // Initialize audio context when user first interacts
         function initAudioContext() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (!audioCtx && !audioInitialized) {
+                try {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    audioInitialized = true;
+                    
+                    // Resume audio context if it's suspended (common on mobile)
+                    if (audioCtx.state === 'suspended') {
+                        audioCtx.resume().then(() => {
+                            console.log('Audio context resumed successfully');
+                            updateAudioStatus();
+                        }).catch(err => {
+                            console.error('Failed to resume audio context:', err);
+                            updateAudioStatus();
+                        });
+                    } else {
+                        updateAudioStatus();
+                    }
+                    
+                    console.log('Audio context initialized successfully');
+                } catch (error) {
+                    console.error('Failed to initialize audio context:', error);
+                    // Fallback: show message to user
+                    showAudioError();
+                }
             }
+        }
+        
+        // Show error message if audio fails
+        function showAudioError() {
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(255, 0, 0, 0.9);
+                color: white;
+                padding: 20px;
+                border-radius: 10px;
+                text-align: center;
+                z-index: 10000;
+                max-width: 300px;
+                font-family: 'SF Pro Display', sans-serif;
+            `;
+            errorDiv.innerHTML = `
+                <h3>🔇 Audio Issue</h3>
+                <p>Please tap/click anywhere on the screen to enable sound!</p>
+                <button onclick="this.parentElement.remove(); initAudioContext();" 
+                        style="background: white; color: black; border: none; padding: 10px 20px; border-radius: 5px; margin-top: 10px; cursor: pointer;">
+                    Try Again
+                </button>
+            `;
+            document.body.appendChild(errorDiv);
         }
         
         // Birthday song notes with custom lyrics for Sneha
@@ -1476,7 +1534,22 @@
             }
             
             play() {
-                if (!audioCtx) return;
+                if (!audioCtx || audioCtx.state === 'suspended') {
+                    console.log('Audio context not ready, attempting to resume...');
+                    if (audioCtx && audioCtx.state === 'suspended') {
+                        audioCtx.resume().then(() => {
+                            console.log('Audio context resumed, retrying play...');
+                            setTimeout(() => this.play(), 100);
+                        }).catch(err => {
+                            console.error('Failed to resume audio context:', err);
+                            this.cease();
+                        });
+                    } else {
+                        console.log('No audio context available');
+                        this.cease();
+                    }
+                    return;
+                }
                 
                 try {
                     this.oscillator = audioCtx.createOscillator();
@@ -1526,7 +1599,18 @@
         }
 
         function startExperience() {
+            // Initialize audio context on first user interaction
             initAudioContext();
+            
+            // For mobile, ensure audio context is ready
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume().then(() => {
+                    console.log('Audio context resumed successfully');
+                }).catch(err => {
+                    console.error('Failed to resume audio context:', err);
+                });
+            }
+            
             document.getElementById('heroStage').style.display = 'none';
             document.getElementById('factsStage').style.display = 'flex';
             currentStage = 'facts';
@@ -1791,13 +1875,55 @@
         // Event listeners
         document.getElementById('wishes').addEventListener("click", function(e) {
             if(e.target.id !== "inputSpeed" && !isPlayingMusic && currentStage === 'song') {
-                document.getElementById('pleaseClick').style.display = 'none';
-                if (sounds.length > 0) {
-                    sounds[0].play();
-                    isPlayingMusic = true;
+                // Ensure audio context is ready for mobile
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume().then(() => {
+                        console.log('Audio context resumed, starting music...');
+                        startMusic();
+                    }).catch(err => {
+                        console.error('Failed to resume audio context:', err);
+                        showAudioError();
+                    });
+                } else if (audioCtx && audioCtx.state === 'running') {
+                    startMusic();
+                } else {
+                    console.log('Initializing audio context...');
+                    initAudioContext();
+                    setTimeout(() => {
+                        if (audioCtx && audioCtx.state === 'running') {
+                            startMusic();
+                        } else {
+                            showAudioError();
+                        }
+                    }, 100);
                 }
             }
         }, false);
+        
+        function startMusic() {
+            document.getElementById('pleaseClick').style.display = 'none';
+            if (sounds.length > 0) {
+                sounds[0].play();
+                isPlayingMusic = true;
+            }
+        }
+        
+        // Update audio status display
+        function updateAudioStatus() {
+            const statusDiv = document.getElementById('audioStatus');
+            if (statusDiv) {
+                if (!audioCtx || audioCtx.state === 'suspended') {
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = '🔇 Tap to enable sound';
+                } else if (audioCtx.state === 'running') {
+                    statusDiv.style.display = 'block';
+                    statusDiv.innerHTML = '🔊 Sound enabled!';
+                    setTimeout(() => {
+                        statusDiv.style.display = 'none';
+                    }, 2000);
+                }
+            }
+        }
 
         document.getElementById('inputSpeed').addEventListener("input", function(e) {
             speed = parseFloat(this.value);
@@ -1811,6 +1937,41 @@
         
         // Prevent right-click for better experience
         document.addEventListener('contextmenu', e => e.preventDefault());
+        
+        // Mobile-specific improvements
+        if ('ontouchstart' in window) {
+            // Add touch-specific event listeners
+            document.addEventListener('touchstart', function() {}, {passive: true});
+            document.addEventListener('touchmove', function() {}, {passive: true});
+            
+            // Initialize audio context on first touch for mobile
+            document.addEventListener('touchstart', function() {
+                if (!audioInitialized) {
+                    console.log('First touch detected, initializing audio...');
+                    initAudioContext();
+                }
+            }, {once: true});
+        }
+        
+        // Prevent zoom on double tap for mobile
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', function (event) {
+            const now = (new Date()).getTime();
+            if (now - lastTouchEnd <= 300) {
+                event.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, false);
+        
+        // Add audio context resume on page visibility change (mobile browsers)
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+                console.log('Page became visible, resuming audio context...');
+                audioCtx.resume().catch(err => {
+                    console.error('Failed to resume audio context on visibility change:', err);
+                });
+            }
+        });
         
         // Add some Easter eggs
         let konami = [];
